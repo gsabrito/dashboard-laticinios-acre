@@ -651,7 +651,6 @@ def sankey_flow(df, max_nodes=60, metric="VALOR_PRODUTO"):
         seg_hex = SEGMENT_COLORS.get(r["SEGMENTO_LACTEO"], C["gray"])
         link_c.append(f"rgba({int(seg_hex[1:3], 16)},{int(seg_hex[3:5], 16)},{int(seg_hex[5:7], 16)},0.5)")
 
-    hover_node = "%{label}<br>Total: " + (fmt_label(sum(value)) + " " + unidade) if value else "%{label}"
     hover_link = "%{source.label} → %{target.label}<br>" + unidade + " %{value:,.0f}<extra></extra>"
 
     fig = go.Figure(data=go.Sankey(
@@ -739,17 +738,12 @@ def parallel_coordinates(df, top_n=5):
 
     cat_idx = {c: i for i, c in enumerate(cat_agg["SUBCATEGORIA_PRODUTO"])}
     cat_agg["CAT_IDX"] = cat_agg["SUBCATEGORIA_PRODUTO"].map(cat_idx)
-    cat_agg["COLOR_IDX"] = cat_agg["SEGMENTO_LACTEO"].astype("category").cat.codes
-
-    n_segs = len(seg_list)
-    custom_cs = [[i / (n_segs - 1), seg_map_color[seg_list[i]]] for i in range(n_segs)] if n_segs > 1 else [[0, seg_map_color[seg_list[0]]]]
 
     fig = go.Figure(data=go.Parcoords(
-        line=dict(color=cat_agg["COLOR_IDX"],
-                  colorscale=custom_cs,
+        line=dict(color=cat_agg["COLOR_HEX"].tolist(),
                   showscale=True,
                   colorbar=dict(title="Segmento", thickness=12, x=1.05,
-                                tickvals=list(range(n_segs)),
+                                tickvals=list(range(len(seg_list))),
                                 ticktext=seg_list)),
         dimensions=[
             dict(label=dims[0], values=cat_agg["CAT_IDX"], range=[0, len(cat_agg) - 1],
@@ -766,7 +760,6 @@ def parallel_coordinates(df, top_n=5):
                  tickvals=[0, 5, 10], ticktext=["Baixo", "Medio", "Alto"]),
         ],
         labelfont=dict(size=10, color=C["dark"]),
-        line_width=3,
     ))
     return _apply_base(fig, height=460,
                        title="Perfil Multi-dimensional: Top 5 Categorias (cor = segmento)",
@@ -937,18 +930,30 @@ def _render_fluxos(df, metric="VALOR_PRODUTO"):
     anos_opts = [{"label": "Todos (2023-2025)", "value": "all"}] + [
         {"label": str(int(a)), "value": int(a)} for a in sorted(df["ANO"].dropna().unique().astype(int))
     ]
+    try:
+        fig_sankey = sankey_flow(df, metric=metric)
+    except Exception as e:
+        fig_sankey = go.Figure().add_annotation(text=f"ERRO SANKY: {e}", showarrow=False)
+    try:
+        fig_donut = doughnut_top5_ufs(df, "all")
+    except Exception as e:
+        fig_donut = go.Figure().add_annotation(text=f"ERRO DONUT: {e}", showarrow=False)
+    try:
+        fig_bump = bump_chart_ufs(df)
+    except Exception as e:
+        fig_bump = go.Figure().add_annotation(text=f"ERRO BUMP: {e}", showarrow=False)
     return [
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=sankey_flow(df, metric=metric), config={"displayModeBar": False}), width=12),
+            dbc.Col(dcc.Graph(figure=fig_sankey, config={"displayModeBar": False}), width=12),
         ], className="g-3 mb-4"),
         dbc.Row([
             dbc.Col([
                 html.Label("Selecione o período:", style={"fontWeight": 600, "fontSize": "0.85rem", "marginBottom": "6px"}),
                 dcc.Dropdown(id="donut-periodo", options=anos_opts, value="all",
                              clearable=False, style={"marginBottom": "10px", "maxWidth": "250px"}),
-                dcc.Graph(id="donut-graph", figure=doughnut_top5_ufs(df, "all"), config={"displayModeBar": False}),
+                dcc.Graph(id="donut-graph", figure=fig_donut, config={"displayModeBar": False}),
             ], width=5),
-            dbc.Col(dcc.Graph(figure=bump_chart_ufs(df), config={"displayModeBar": False}), width=7),
+            dbc.Col(dcc.Graph(figure=fig_bump, config={"displayModeBar": False}), width=7),
         ], className="g-3 mb-4"),
     ]
 
@@ -1038,26 +1043,25 @@ def render_substituicao(df):
 
 
 def _render_precos(df, metric="VALOR_PRODUTO", cat_opts=None, c1=None, c2=None):
-    top_n = 5
+    try:
+        fig_scatter = scatter_bolhas(df)
+    except Exception as e:
+        fig_scatter = go.Figure().add_annotation(text=f"ERRO SCATTER: {e}", showarrow=False)
+    try:
+        fig_radar = radar_comparacao(df, c1, c2) if c1 and c2 else go.Figure().add_annotation(text="Selecione 2 categorias", showarrow=False)
+    except Exception as e:
+        fig_radar = go.Figure().add_annotation(text=f"ERRO RADAR: {e}", showarrow=False)
     return [
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=scatter_bolhas(df), config={"displayModeBar": False}), width=7),
+            dbc.Col(dcc.Graph(figure=fig_scatter, config={"displayModeBar": False}), width=7),
             dbc.Col([
                 html.Label("Comparar categorias:", style={"fontWeight": 600, "fontSize": "0.82rem", "marginBottom": "4px"}),
                 dcc.Dropdown(id="radar-cat1", options=cat_opts or [], value=c1,
                              clearable=False, style={"marginBottom": "6px", "fontSize": "0.8rem"}),
                 dcc.Dropdown(id="radar-cat2", options=cat_opts or [], value=c2,
                              clearable=False, style={"marginBottom": "6px", "fontSize": "0.8rem"}),
-                dcc.Graph(id="radar-graph", figure=radar_comparacao(df, c1, c2) if c1 and c2 else {},
-                          config={"displayModeBar": False}),
+                dcc.Graph(id="radar-graph", figure=fig_radar, config={"displayModeBar": False}),
             ], width=5),
-        ], className="g-3 mb-4"),
-        dbc.Row([
-            dbc.Col(dcc.Graph(figure=parallel_coordinates(df, top_n=top_n), config={"displayModeBar": False}), width=8),
-            dbc.Col(html.Div([
-                html.H6("Valores Reais — Top 5 Categorias", className="mb-2", style={"fontWeight": 600, "color": "#015f4b"}),
-                _tabela_parcoords(df, top_n),
-            ]), width=4),
         ], className="g-3 mb-4"),
     ]
 
@@ -1078,8 +1082,9 @@ def render_precos(df):
             {"termo": "Subtitle explicativo", "definição": "O subtítulo '(tamanho da bolha = valor total)' abaixo do titulo do gráfico de bolhas explica que bolhas maiores representam categorias com maior valor total importado, independentemente da posição nos eixos."},
             {"termo": "Radar / Spider Chart", "definição": "Comparação multivariada entre duas categorias selecionadas nos dropdowns. Os eixos são: Volume (ton), Preço Mediano (R$/kg), Número de UFs fornecedoras, Ticket Medio (R$) e Valor Total (R$ Mi). Cada eixo é normalizado para escala 0-1 para permitir comparação justa entre métricas de unidades diferentes. Passe o mouse sobre os pontos para ver os valores reais. A categoria com área maior tem desempenho superior na maioria das métricas."},
             {"termo": "Normalizado (norm)", "definição": "Valor ajustado para escala 0-1 dentro de cada dimensão. O valor 0 representa o menor valor entre as duas categorias comparadas e 1 o maior. Serve apenas para visualização comparativa — os valores reais aparecem no hover (ao passar o mouse)."},
-            {"termo": "Coordenadas Paralelas", "definição": "Gráfico que mostra o perfil multidimensional das top 5 categorias. Cada eixo vertical representa uma variável normalizada (escala 0-10) e cada linha colorida uma categoria. A cor indica o segmento do produto. Permite identificar perfis: por exemplo, uma linha que passa por 'Alto' em volume mas 'Baixo' em preco sugere uma commodity de grande escala; ja 'Alto' em preco e 'Baixo' em volume sugere um produto premium de nicho."},
             {"termo": "Share %", "definição": "Participação percentual média da categoria no seu segmento. Indica o peso relativo da categoria dentro da sua família de produtos. Um share alto significa que a categoria domina seu segmento."},
+            {"termo": "QUEIJO FRESCO — composição", "definição": "Inclui: REQUEIJÃO (cremoso, light, bisnaga, copo), RICOTA (fresca, defumada, temperada), CREAM CHEESE (Catupiry, Philadelphia, cream cheese tradicional), PETIT SUISSE (Chambinho, Polenguinho, Frutapinho, Danoninho, Nuvolat, Batavinho) e QUEIJO FRESCO genérico (Burrata, Queijo de Búfala, Creme Quark). São produtos de alta umidade, não maturados, consumo rápido."},
+            {"termo": "QUEIJO OUTROS — composição", "definição": "Categoria residual que agrupa queijos que não se enquadram nas classificações mais específicas (Mussarela, Parmesão, Coalho, Minas, Prato, Brie, Gouda, Reino, Estepe, Cottage, Provolone, Azul, Ralado, Processado). Inclui queijos artesanais regionais, misturas lácteas com queijo, e produtos com descrição genérica de 'queijo' sem identificação precisa do tipo."},
         ]),
     ])
 
